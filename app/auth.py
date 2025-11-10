@@ -1,11 +1,10 @@
 import bcrypt
 import constants
 import jwt
+import re
 
 from datetime import datetime, timedelta, timezone
 from pymongo import MongoClient
-from jwt.exceptions import InvalidTokenError
-from pwdlib import PasswordHash
 from fastapi.security import OAuth2PasswordBearer
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -39,5 +38,14 @@ def authenticate_user(username: str, password: str) -> bool:
       return False
   except Exception as e:
     raise Exception("Unable to find the document due to the following error: ", e)
+  
+def sanitize_login_input(username_input: str, password_input: str) -> tuple[str, str]:
+    return sanitize_input(username_input), sanitize_password(password_input)
+
+def sanitize_input(user_input):
+    return re.sub(r'[^\w]', '', user_input)
+
+def sanitize_password(user_input):
+    return re.sub(r'[^\w@#$%^&+=]', '', user_input)
 
     
