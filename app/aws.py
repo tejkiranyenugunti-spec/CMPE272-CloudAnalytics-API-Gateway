@@ -1,4 +1,3 @@
-# app/aws.py
 from typing import Optional, List, Dict, Any
 from fastapi import APIRouter, Query, HTTPException
 from starlette.concurrency import run_in_threadpool
@@ -138,3 +137,18 @@ async def get_prices(
         return {"count": len(items), "items": [json.loads(i) for i in items]}
     # simplified view like Azure endpoint
     return {"count": len(items), "items": parse_on_demand(items)}
+
+
+# --- Run this file standalone ---
+from fastapi import FastAPI
+import uvicorn
+
+# create FastAPI app
+app = FastAPI()
+
+# include your AWS router
+app.include_router(router)
+
+# run app directly
+if __name__ == "__main__":
+    uvicorn.run("AWS:app", host="127.0.0.1", port=8000, reload=True)
