@@ -1,0 +1,14 @@
+opentelemetry-distro
+opentelemetry-exporter-otlp
+opentelemetry-instrumentation-fastapi
+fastapi
+slowapi
+uvicorn
+auth
+starlette
+boto3
+jwt
+bcrypt
+pymongo
+datetime
+python-multipart
