@@ -1,5 +1,5 @@
 from typing import Optional, List, Dict, Any
-from fastapi import APIRouter, Query, HTTPException
+from fastapi import APIRouter, Query
 from starlette.concurrency import run_in_threadpool
 import boto3, json
 
@@ -26,7 +26,6 @@ REGION_CODE_TO_LOCATION = {
     "ap-northeast-2": "Asia Pacific (Seoul)",
     "ap-east-1": "Asia Pacific (Hong Kong)",
     "sa-east-1": "South America (São Paulo)",
-    # add more as needed
 }
 
 def to_location(val: Optional[str]) -> Optional[str]:
@@ -43,6 +42,11 @@ def build_filters(
     tenancy: Optional[str],
     pre_installed_sw: Optional[str],
     capacity_status: Optional[str],
+    # NEW: extra filters for services like RDS or EBS
+    database_engine: Optional[str] = None,
+    deployment_option: Optional[str] = None,
+    license_model: Optional[str] = None,
+    volume_type: Optional[str] = None,
 ) -> List[Dict[str, str]]:
     fs: List[Dict[str, str]] = []
     if location:
@@ -57,6 +61,17 @@ def build_filters(
         fs.append({"Type": "TERM_MATCH", "Field": "preInstalledSw", "Value": pre_installed_sw})
     if capacity_status:
         fs.append({"Type": "TERM_MATCH", "Field": "capacitystatus", "Value": capacity_status})
+
+    # NEW fields used by compare endpoints
+    if database_engine:
+        fs.append({"Type": "TERM_MATCH", "Field": "databaseEngine", "Value": database_engine})
+    if deployment_option:
+        fs.append({"Type": "TERM_MATCH", "Field": "deploymentOption", "Value": deployment_option})
+    if license_model:
+        fs.append({"Type": "TERM_MATCH", "Field": "licenseModel", "Value": license_model})
+    if volume_type:
+        fs.append({"Type": "TERM_MATCH", "Field": "volumeType", "Value": volume_type})
+
     return fs
 
 def get_products_paginated(service_code: str, filters: List[Dict[str, str]], max_pages: int) -> List[str]:
@@ -91,8 +106,13 @@ def parse_on_demand(items: List[str]) -> List[Dict[str, Any]]:
             for _, dim in term.get("priceDimensions", {}).items():
                 unit = (dim.get("unit") or "").lower()
                 usd = dim.get("pricePerUnit", {}).get("USD")
+                # Keep using hourly when present (works for EC2/RDS); other services
+                # can be consumed as raw in compare endpoints when they aren't hourly.
                 if usd and unit.startswith("hr"):
-                    price_hr = float(usd)
+                    try:
+                        price_hr = float(usd)
+                    except Exception:
+                        pass
                     break
             if price_hr is not None:
                 break
@@ -109,6 +129,11 @@ def parse_on_demand(items: List[str]) -> List[Dict[str, Any]]:
                     "capacitystatus": attrs.get("capacitystatus"),
                     "vcpu": attrs.get("vcpu"),
                     "memory": attrs.get("memory"),
+                    # Helpful extras if present
+                    "databaseEngine": attrs.get("databaseEngine"),
+                    "deploymentOption": attrs.get("deploymentOption"),
+                    "licenseModel": attrs.get("licenseModel"),
+                    "volumeType": attrs.get("volumeType"),
                 },
                 "ondemand_price_hour_usd": price_hr,
             }
@@ -124,31 +149,35 @@ async def get_prices(
     tenancy: Optional[str] = Query(None, description="Shared/Dedicated/Host"),
     pre_installed_sw: Optional[str] = Query(None, description="NA / SQL Server, etc."),
     capacity_status: Optional[str] = Query(None, description="Used, etc."),
+    # --- NEW filters for RDS and EBS ---
+    database_engine: Optional[str] = Query(None, description="RDS only: MySQL | PostgreSQL | MariaDB | SQL Server | Oracle"),
+    deployment_option: Optional[str] = Query(None, description="RDS only: Single-AZ | Multi-AZ"),
+    license_model: Optional[str] = Query(None, description="RDS only: License included | BYOL"),
+    volume_type: Optional[str] = Query(None, description="EBS only: gp3 | gp2 | io1 | io2 | st1 | sc1"),
     max_pages: int = Query(1, ge=1, le=10),
     raw: bool = Query(False, description="Return raw AWS PriceList elements"),
 ):
-    # convert region code -> marketing name if needed
     location = to_location(region)
-    filters = build_filters(location, instance_type, operating_system, tenancy, pre_installed_sw, capacity_status)
+    filters = build_filters(
+        location, instance_type, operating_system, tenancy, pre_installed_sw, capacity_status
+    )
+
+    # --- Add RDS / EBS specific filters when relevant ---
+    if service_code == "AmazonRDS":
+        if database_engine:
+            filters.append({"Type": "TERM_MATCH", "Field": "databaseEngine", "Value": database_engine})
+        if deployment_option:
+            filters.append({"Type": "TERM_MATCH", "Field": "deploymentOption", "Value": deployment_option})
+        if license_model:
+            filters.append({"Type": "TERM_MATCH", "Field": "licenseModel", "Value": license_model})
+
+    if service_code == "AmazonEC2" and volume_type:
+        filters.append({"Type": "TERM_MATCH", "Field": "volumeType", "Value": volume_type})
 
     # boto3 is blocking; run in a thread so FastAPI stays async-friendly
     items = await run_in_threadpool(get_products_paginated, service_code, filters, max_pages)
+
     if raw:
         return {"count": len(items), "items": [json.loads(i) for i in items]}
-    # simplified view like Azure endpoint
+
     return {"count": len(items), "items": parse_on_demand(items)}
-
-
-# --- Run this file standalone ---
-from fastapi import FastAPI
-import uvicorn
-
-# create FastAPI app
-app = FastAPI()
-
-# include your AWS router
-app.include_router(router)
-
-# run app directly
-if __name__ == "__main__":
-    uvicorn.run("AWS:app", host="127.0.0.1", port=8000, reload=True)
