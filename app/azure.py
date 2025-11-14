@@ -42,3 +42,8 @@ async def get_prices(
     query = urlencode({"$filter": " and ".join(filters)}, safe=" '") if filters else ""
     items = await fetch(query, max_pages)
     return {"count": len(items), "items": items}
+# --- Run this file standalone ---
+from fastapi import FastAPI
+
+app = FastAPI(title="Azure Pricing")
+app.include_router(router)
