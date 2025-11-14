@@ -5,7 +5,7 @@ FROM python:3.14
 WORKDIR /code
 
 #Copy the framework and the dependencies of the FastAPI application into the working directory
-COPY ./requirements.txt /code/requirements.txt
+COPY ./requirements.txt .
 
 #Install the framework and the dependencies in the requirements.txt file in our Podman image and container
 RUN pip install -r requirements.txt

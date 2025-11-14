@@ -7,7 +7,7 @@ uvicorn
 auth
 starlette
 boto3
-jwt
+pyjwt
 bcrypt
 pymongo
 datetime
