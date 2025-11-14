@@ -1,14 +1,16 @@
 opentelemetry-distro
 opentelemetry-exporter-otlp
 opentelemetry-instrumentation-fastapi
+prometheus-fastapi-instrumentator
 fastapi
 slowapi
 uvicorn
 auth
 starlette
 boto3
-pyjwt
+jwt
 bcrypt
 pymongo
 datetime
 python-multipart
+httpx
