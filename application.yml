@@ -14,24 +14,14 @@ spec:
     spec:
       containers:
       - name: cmpe272
-        image: docker.io/alxhuang001/cmpe272
+        image: cmpe272:latest          
+        imagePullPolicy: IfNotPresent  
         resources:
+          requests:
+            cpu: "250m"
+            memory: "128Mi"
           limits:
-            memory: "256Mi"
             cpu: "500m"
+            memory: "256Mi"
         ports:
         - containerPort: 8000
-
----
-
-apiVersion: v1
-kind: Service
-metadata:
-  name: cmpe272-service
-spec:
-  selector:
-    app: cmpe272
-  ports:
-  - port: 8000
-    targetPort: 8000
-  type: LoadBalancer
