@@ -12,7 +12,7 @@ import constants
 from constants import Token, TokenData
 
 
-limiter = Limiter(key_func=get_remote_address, default_limits=["5/minute"])
+limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])
 app = FastAPI(title="Cloud Analytics", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -21,13 +21,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def root():
     return {"message": "Welcome to FastAPI Authentication Demo"}
 
-@app.get("/server")
-async def ping_server(request: Request):
+@app.get("/token")
+async def validate_login(request: Request, token: str = Depends(auth.oauth2_scheme)):
     try:
-        auth.client.admin.command('ping')
-        print("Pinged your deployment. You successfully connected to MongoDB!")
+        if auth.validate_jwt(token):
+            return {"message": "Token is valid"}
     except Exception as e:
-        print(e)
+        raise Exception("Unable to connect to the server due to the following error: " + str(e))
 
 @app.post("/user/create")
 async def create_user(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
