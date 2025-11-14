@@ -1,22 +1,22 @@
-#Instruct Podman Engine to use official python:3.14 as the base image
-FROM python:3.14
+# Use a stable, small Python base
+FROM python:3.13-slim
 
-#Create a working directory(app) for the Podman image and container
-WORKDIR /code
+# Create workdir
+WORKDIR /app
 
-#Copy the framework and the dependencies of the FastAPI application into the working directory
-COPY ./requirements.txt .
+# (Optional) basic build deps, then clean
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl && rm -rf /var/lib/apt/lists/*
 
-#Install the framework and the dependencies in the requirements.txt file in our Podman image and container
-RUN pip install -r requirements.txt
+# Install deps first (better layer cache)
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-#Copy the remaining files and the source code from the host fast-api folder to the FastAPI application container working directory
-COPY ./app /code/app
+# Copy the whole project
+COPY . .
 
-WORKDIR app
+# Expose the port your app and K8s Service use
+EXPOSE 8000
 
-#Expose the FastAPI application on port 8080 inside the container
-EXPOSE 8080
-
-#Start and run the FastAPI application container
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0"]
+# Start FastAPI (module path is app.main:app; bind to 0.0.0.0:8000)
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
