@@ -1,39 +1,57 @@
-from typing import Union, Annotated
 from datetime import timedelta
+from typing import Annotated
 
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from slowapi.errors import RateLimitExceeded
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
+from prometheus_fastapi_instrumentator import Instrumentator
 
-import auth
-import constants
-from constants import Token, TokenData
+# --- Import your internal modules ---
+from app import auth, constants
+from app.constants import Token
+from app.aws import router as aws_router
+from app.azure import router as azure_router
+from app.compare import router as compare_router
 
-
+# ---- App setup ----
 limiter = Limiter(key_func=get_remote_address, default_limits=["10/minute"])
-app = FastAPI(title="Cloud Analytics", version="1.0.0")
+app = FastAPI(title="Cloud Analytics API Gateway", version="1.0.0")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+# ---- Prometheus metrics setup ----
+Instrumentator().instrument(app).expose(app)
+
+# ---- Mount Routers ----
+# Public endpoints:
+app.include_router(aws_router)
+app.include_router(azure_router)
+
+# Protected endpoints: all /compare/* require Bearer token
+app.include_router(compare_router, dependencies=[Depends(auth.require_auth)])
+
+# ---- Root ----
 @app.get("/")
 async def root():
-    return {"message": "Welcome to FastAPI Authentication Demo"}
+    return {"message": "Welcome to Cloud Analytics API Gateway"}
 
-@app.get("/token")
-async def validate_login(request: Request, token: str = Depends(auth.oauth2_scheme)):
-    try:
-        if auth.validate_jwt(token):
-            return {"message": "Token is valid"}
-    except Exception as e:
-        raise Exception("Unable to connect to the server due to the following error: " + str(e))
-
+# ---- Authentication Endpoints ----
 @app.post("/user/create")
 async def create_user(request: Request, form_data: Annotated[OAuth2PasswordRequestForm, Depends()]):
+    """
+    Create a new user in MongoDB.
+    """
     try:
         username, password = auth.sanitize_login_input(form_data.username, form_data.password)
-        auth.client.get_database("CloudAnalytics").get_collection("users").insert_one({
+        db = auth.client.get_database("CloudAnalytics")
+        users = db.get_collection("users")
+
+        if users.find_one({"username": username}):
+            raise HTTPException(status_code=400, detail="Username already exists")
+
+        users.insert_one({
             "username": username,
             "password": auth.hash_password(password)
         })
@@ -41,7 +59,7 @@ async def create_user(request: Request, form_data: Annotated[OAuth2PasswordReque
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Unable to create user due to the following error: " + str(e)
+            detail=f"Unable to create user: {str(e)}"
         )
 
 @app.post("/token")
@@ -49,6 +67,9 @@ async def login_for_access_token(
     request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
 ) -> Token:
+    """
+    Authenticate user and return JWT access token.
+    """
     try:
         username, password = auth.sanitize_login_input(form_data.username, form_data.password)
         if not auth.authenticate_user(username, password):
@@ -63,4 +84,36 @@ async def login_for_access_token(
         )
         return Token(access_token=access_token, token_type="bearer")
     except Exception as e:
-        raise Exception("Unable to login due to the following error: " + str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unable to login: {str(e)}"
+        )
+
+@app.get("/token")
+async def validate_login(request: Request, token: str = Depends(auth.oauth2_scheme)):
+    """
+    Validate a JWT token.
+    """
+    try:
+        if auth.validate_jwt(token):
+            return {"message": "Token is valid"}
+    except HTTPException as e:
+        # pass through structured 401s from validate_jwt
+        raise e
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Invalid or expired token: {str(e)}"
+        )
+
+# ---- MongoDB health check ----
+@app.get("/server")
+async def ping_server():
+    """
+    Ping MongoDB connection to verify connectivity.
+    """
+    try:
+        auth.client.admin.command("ping")
+        return {"status": "OK", "message": "MongoDB connection successful"}
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
